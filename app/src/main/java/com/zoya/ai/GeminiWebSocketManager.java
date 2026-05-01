@@ -68,8 +68,7 @@ public class GeminiWebSocketManager {
     }
 
     private void debug(String msg) {
-        Log.d(TAG, "[DEBUG] " + msg);
-        if (listener != null) listener.onDebug(msg);
+        Log.d(TAG, msg);
     }
 
     public void connect(String apiKey) {
@@ -77,7 +76,7 @@ public class GeminiWebSocketManager {
         currentApiKey = apiKey;
         String url = BASE_URL + "?key=" + apiKey;
 
-        debug("Step 1: Connecting to Gemini WebSocket...");
+        Log.d(TAG, "Connecting to Gemini WebSocket...");
 
         Request request = new Request.Builder()
                 .url(url)
@@ -86,21 +85,18 @@ public class GeminiWebSocketManager {
         webSocket = client.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(WebSocket ws, Response response) {
-                debug("Step 2: WebSocket CONNECTED! HTTP " + response.code());
+                Log.d(TAG, "WebSocket connected: HTTP " + response.code());
                 if (listener != null) listener.onConnected();
                 sendSetupMessage();
             }
 
             @Override
             public void onMessage(WebSocket ws, String text) {
-                String preview = text.substring(0, Math.min(300, text.length()));
-                debug("Step 4: Server TEXT msg: " + preview);
                 handleMessage(text);
             }
 
             @Override
             public void onMessage(WebSocket ws, ByteString bytes) {
-                debug("Step 4: Server BINARY msg: " + bytes.size() + " bytes");
                 handleMessage(bytes.utf8());
             }
 
@@ -110,19 +106,19 @@ public class GeminiWebSocketManager {
                 if (response != null) {
                     errorMsg += " (HTTP " + response.code() + ")";
                 }
-                debug("FAIL: WebSocket error: " + errorMsg);
+                Log.e(TAG, "WebSocket error: " + errorMsg);
                 Log.e(TAG, "WebSocket error: " + errorMsg, t);
                 if (listener != null) listener.onError(errorMsg);
             }
 
             @Override
             public void onClosing(WebSocket ws, int code, String reason) {
-                debug("CLOSING: code=" + code + " reason=" + reason);
+                Log.d(TAG, "WebSocket closing: code=" + code + " reason=" + reason);
             }
 
             @Override
             public void onClosed(WebSocket ws, int code, String reason) {
-                debug("CLOSED: code=" + code + " reason=" + reason);
+                Log.d(TAG, "WebSocket closed: code=" + code + " reason=" + reason);
                 if (listener != null) listener.onDisconnected();
             }
         });
@@ -132,12 +128,13 @@ public class GeminiWebSocketManager {
             if (!setupComplete && webSocket != null) {
                 if (connectAttempt < 3) {
                     connectAttempt++;
-                    debug("TIMEOUT: No setupComplete! Reconnecting fresh (attempt " + connectAttempt + ")...");
+                    Log.w(TAG, "Setup timeout, reconnecting (attempt " + connectAttempt + ")");
                     try { webSocket.cancel(); } catch (Exception ignored) {}
                     webSocket = null;
                     connect(currentApiKey);
                 } else {
-                    debug("TIMEOUT: 3 attempts failed! Check API key and network.");
+                    Log.e(TAG, "Setup failed after 3 attempts");
+                    if (listener != null) listener.onError("Connection timeout - check network");
                 }
             }
         }, 15000);
@@ -177,20 +174,16 @@ public class GeminiWebSocketManager {
         msg.add("setup", setup);
 
         String json = gson.toJson(msg);
-        debug("Step 3: Setup JSON: " + json.substring(0, Math.min(300, json.length())));
-        boolean sent = webSocket.send(json);
-        debug("Step 3b: Setup sent=" + sent + ", waiting for setupComplete...");
+        webSocket.send(json);
     }
 
     private void handleMessage(String text) {
         try {
             JsonObject msg = gson.fromJson(text, JsonObject.class);
-            debug("Parsing msg keys: " + msg.keySet());
-
             // Setup complete response
             if (msg.has("setupComplete")) {
                 setupComplete = true;
-                debug("Step 5: SETUP COMPLETE! Ready to start audio!");
+                Log.d(TAG, "Setup complete");
                 if (listener != null) listener.onSetupComplete();
                 return;
             }

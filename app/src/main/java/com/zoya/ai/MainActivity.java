@@ -248,26 +248,18 @@ public class MainActivity extends AppCompatActivity
     // Session Management
     // ========================
 
-    private void debugToast(String msg) {
-        Log.d(TAG, "[DEBUG] " + msg);
-        mainHandler.post(() -> {
-            chatAdapter.addMessage(new ChatMessage("[DEBUG] " + msg, ChatMessage.TYPE_ZOYA));
-            scrollToBottom();
-        });
+    private void debugLog(String msg) {
+        Log.d(TAG, msg);
     }
 
     private void startSession() {
         String apiKey = prefs.getString(KEY_API_KEY, "");
-        String keyPreview = (apiKey != null && apiKey.length() > 10) ? apiKey.substring(0, 10) + "..." : "null";
-        debugToast("API key: " + keyPreview + " (len=" + (apiKey != null ? apiKey.length() : 0) + ")");
 
         if (TextUtils.isEmpty(apiKey) || "YOUR_API_KEY_HERE".equals(apiKey)) {
-            debugToast("No API key! Showing overlay...");
             showApiKeyOverlay();
             return;
         }
 
-        debugToast("Mic permission: " + hasMicPermission());
         if (!hasMicPermission()) {
             Toast.makeText(this, "Microphone permission required!", Toast.LENGTH_SHORT).show();
             requestMicPermission();
@@ -281,11 +273,9 @@ public class MainActivity extends AppCompatActivity
             btnSession.setTextColor(ContextCompat.getColor(this, R.color.red_stop));
 
             updateState(AppState.PROCESSING);
-            debugToast("Calling webSocketManager.connect()...");
             webSocketManager.connect(apiKey);
         } catch (Exception e) {
             Log.e(TAG, "Error starting session: " + e.getMessage(), e);
-            debugToast("EXCEPTION in startSession: " + e.getMessage());
             Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
             stopSession();
         }
@@ -480,30 +470,26 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onConnected() {
-        debugToast("WebSocket CONNECTED!");
+        debugLog("WebSocket connected");
     }
 
     @Override
     public void onSetupComplete() {
-        debugToast("SETUP COMPLETE! Starting audio...");
+        debugLog("Setup complete");
         mainHandler.post(() -> {
             Toast.makeText(this, "Zoya is ready! Start speaking...", Toast.LENGTH_SHORT).show();
             updateState(AppState.LISTENING);
 
             try {
-                debugToast("Starting AudioRecord...");
                 audioManager.startRecording();
-                debugToast("AudioRecord started OK!");
             } catch (Exception e) {
-                debugToast("AudioRecord FAILED: " + e.getMessage());
+                Log.e(TAG, "AudioRecord failed: " + e.getMessage(), e);
             }
 
             try {
-                debugToast("Starting AudioTrack...");
                 audioManager.startPlayback();
-                debugToast("AudioTrack started OK!");
             } catch (Exception e) {
-                debugToast("AudioTrack FAILED: " + e.getMessage());
+                Log.e(TAG, "AudioTrack failed: " + e.getMessage(), e);
             }
 
             // Send any pending text message
@@ -519,7 +505,6 @@ public class MainActivity extends AppCompatActivity
     @Override
     public void onAudioData(byte[] audioData) {
         if (currentState != AppState.SPEAKING) {
-            debugToast("Receiving audio from Zoya! (" + audioData.length + " bytes)");
             updateState(AppState.SPEAKING);
         }
         audioManager.enqueueAudio(audioData);
@@ -527,13 +512,11 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onTextResponse(String text) {
-        debugToast("Text from Zoya: " + text.substring(0, Math.min(50, text.length())));
         currentResponseText.append(text);
     }
 
     @Override
     public void onTurnComplete() {
-        debugToast("Turn complete!");
         mainHandler.post(() -> {
             if (currentResponseText.length() > 0) {
                 chatAdapter.addMessage(
@@ -547,7 +530,7 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onError(String error) {
-        debugToast("ERROR: " + error);
+        Log.e(TAG, "Error: " + error);
         mainHandler.post(() -> {
             String msg = error != null ? error : "Unknown error";
             chatAdapter.addMessage(new ChatMessage("Error: " + msg, ChatMessage.TYPE_ZOYA));
@@ -561,7 +544,7 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onDisconnected() {
-        debugToast("WebSocket DISCONNECTED");
+        debugLog("WebSocket disconnected");
         mainHandler.post(() -> {
             if (sessionActive) {
                 stopSession();
@@ -571,7 +554,6 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onInterrupted() {
-        debugToast("Interrupted by user!");
         mainHandler.post(() -> {
             audioManager.clearPlaybackQueue();
             updateState(AppState.LISTENING);
@@ -580,7 +562,7 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onDebug(String message) {
-        debugToast(message);
+        debugLog(message);
     }
 
     // ========================
