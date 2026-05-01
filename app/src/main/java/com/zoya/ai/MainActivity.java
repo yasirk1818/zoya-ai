@@ -49,6 +49,8 @@ public class MainActivity extends AppCompatActivity
     // Managers
     private GeminiWebSocketManager webSocketManager;
     private ZoyaAudioManager audioManager;
+    private GeminiTextChatManager textChatManager;
+    private GeminiTTSManager ttsManager;
 
     // Views
     private ZoyaVisualizerView visualizer;
@@ -112,15 +114,23 @@ public class MainActivity extends AppCompatActivity
     }
 
     private void initManagers() {
+        // Voice session (WebSocket Live API)
         webSocketManager = new GeminiWebSocketManager();
         webSocketManager.setListener(this);
 
+        // Audio I/O
         audioManager = new ZoyaAudioManager();
         audioManager.setAudioCallback(data -> {
             if (sessionActive) {
                 webSocketManager.sendAudioChunk(data);
             }
         });
+
+        // Text chat (REST API - gemini-2.0-flash)
+        textChatManager = new GeminiTextChatManager();
+
+        // TTS (gemini-2.5-flash-preview-tts)
+        ttsManager = new GeminiTTSManager();
     }
 
     private void setupClickListeners() {
@@ -150,6 +160,7 @@ public class MainActivity extends AppCompatActivity
         findViewById(R.id.btnClear).setOnClickListener(v -> {
             animateButtonPress(v);
             chatAdapter.clearMessages();
+            textChatManager.clearHistory();
         });
 
         // Send text
@@ -368,27 +379,85 @@ public class MainActivity extends AppCompatActivity
         scrollToBottom();
         textInput.setText("");
 
-        if (!sessionActive) {
-            // Save the text to send after session is established
-            pendingTextMessage = true;
-            pendingText = text;
-            startSession();
+        // If voice session is active, send through WebSocket
+        if (sessionActive) {
+            if (!webSocketManager.isSetupComplete()) {
+                pendingTextMessage = true;
+                pendingText = text;
+                Toast.makeText(this, "Connecting... message will be sent shortly", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            updateState(AppState.PROCESSING);
+            webSocketManager.sendTextMessage(text);
             return;
         }
 
-        if (!webSocketManager.isSetupComplete()) {
-            pendingTextMessage = true;
-            pendingText = text;
-            Toast.makeText(this, "Connecting... message will be sent shortly", Toast.LENGTH_SHORT).show();
+        // Voice session is NOT active → use text chat model (gemini-2.0-flash)
+        String apiKey = prefs.getString(KEY_API_KEY, "");
+        if (TextUtils.isEmpty(apiKey)) {
+            showApiKeyOverlay();
             return;
         }
 
         updateState(AppState.PROCESSING);
-        webSocketManager.sendTextMessage(text);
+        Toast.makeText(this, "Zoya soch rahi hai...", Toast.LENGTH_SHORT).show();
+
+        textChatManager.sendMessage(apiKey, text, new GeminiTextChatManager.TextChatCallback() {
+            @Override
+            public void onResponse(String responseText) {
+                mainHandler.post(() -> {
+                    chatAdapter.addMessage(new ChatMessage(responseText, ChatMessage.TYPE_ZOYA));
+                    scrollToBottom();
+
+                    // Now convert response to speech using TTS model
+                    updateState(AppState.SPEAKING);
+                    speakWithTTS(responseText);
+                });
+            }
+
+            @Override
+            public void onError(String error) {
+                mainHandler.post(() -> {
+                    chatAdapter.addMessage(new ChatMessage("Error: " + error, ChatMessage.TYPE_ZOYA));
+                    scrollToBottom();
+                    updateState(AppState.IDLE);
+                    Toast.makeText(MainActivity.this, "Error: " + error, Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void speakWithTTS(String text) {
+        String apiKey = prefs.getString(KEY_API_KEY, "");
+        if (TextUtils.isEmpty(apiKey)) return;
+
+        // Initialize audio for playback if not already
+        try {
+            audioManager.startPlayback();
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting playback: " + e.getMessage());
+        }
+
+        ttsManager.synthesize(apiKey, text, new GeminiTTSManager.TTSCallback() {
+            @Override
+            public void onAudioReady(byte[] pcmData) {
+                audioManager.enqueueAudio(pcmData);
+                mainHandler.post(() -> updateState(AppState.IDLE));
+            }
+
+            @Override
+            public void onError(String error) {
+                Log.e(TAG, "TTS error: " + error);
+                mainHandler.post(() -> {
+                    updateState(AppState.IDLE);
+                    Toast.makeText(MainActivity.this, "TTS: " + error, Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
     }
 
     // ========================
-    // GeminiListener Callbacks
+    // GeminiListener Callbacks (Voice Session)
     // ========================
 
     @Override
