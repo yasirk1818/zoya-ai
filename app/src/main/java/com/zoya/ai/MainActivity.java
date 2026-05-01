@@ -36,7 +36,7 @@ public class MainActivity extends AppCompatActivity
     private static final int PERMISSION_REQUEST_CODE = 100;
     private static final String PREFS_NAME = "zoya_prefs";
     private static final String KEY_API_KEY = "api_key";
-    private static final String DEFAULT_API_KEY = "AIzaSyDZ_yFF841sAjhSiWx_26yymlhlk5C1Hks";
+    private static final String DEFAULT_API_KEY = "AIzaSyD9OljuXJZN-n4_D39wrcsCQMW8WTLcNCw";
 
     // State
     private enum AppState { IDLE, LISTENING, PROCESSING, SPEAKING }

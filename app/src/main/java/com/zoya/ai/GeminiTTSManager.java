@@ -20,7 +20,7 @@ import okhttp3.Response;
 public class GeminiTTSManager {
 
     private static final String TAG = "GeminiTTS";
-    private static final String MODEL = "gemini-2.5-flash-preview-tts";
+    private static final String MODEL = "gemini-3.1-flash-tts-preview";
     private static final String BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent";
     private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
