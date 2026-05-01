@@ -214,11 +214,8 @@ public class GeminiWebSocketManager {
                                 if (listener != null) listener.onAudioData(audioBytes);
                             }
 
-                            // Text response
-                            if (part.has("text")) {
-                                String responseText = part.get("text").getAsString();
-                                if (listener != null) listener.onTextResponse(responseText);
-                            }
+                            // Ignore modelTurn text — it's internal model thinking, not spoken content
+                            // Actual spoken words come via outputTranscription below
                         }
                     }
                 }
