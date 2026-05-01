@@ -182,7 +182,9 @@ public class GeminiWebSocketManager {
         msg.add("setup", setup);
 
         String json = gson.toJson(msg);
-        webSocket.send(json);
+        if (webSocket != null) {
+            webSocket.send(json);
+        }
     }
 
     private void handleMessage(String text) {

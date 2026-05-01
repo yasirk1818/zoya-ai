@@ -95,8 +95,6 @@ public class MainActivity extends AppCompatActivity
         // Always fetch settings from admin panel API
         String apiUrl = prefs.getString(KEY_API_URL, DEFAULT_API_URL);
         if (!TextUtils.isEmpty(apiUrl)) {
-            // Clear any old cached key first, then fetch fresh from admin panel
-            prefs.edit().remove(KEY_API_KEY).apply();
             fetchSettingsFromApi(apiUrl);
         } else if (!"YOUR_API_KEY_HERE".equals(DEFAULT_API_KEY)) {
             prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
@@ -276,31 +274,46 @@ public class MainActivity extends AppCompatActivity
                 String body = response.body().string();
                 org.json.JSONObject json = new org.json.JSONObject(body);
 
-                boolean keySet = false;
+                String fetchedKey = null;
+                String fetchedPersonality = null;
+
                 if (json.has("api_key")) {
                     String key = json.getString("api_key");
-                    if (!key.isEmpty() && !"YOUR_API_KEY_HERE".equals(key)) {
-                        prefs.edit().putString(KEY_API_KEY, key).apply();
-                        keySet = true;
-                        Log.d(TAG, "API key fetched from admin panel");
+                    if (key != null && !key.isEmpty() && !"YOUR_API_KEY_HERE".equals(key)) {
+                        fetchedKey = key;
                     }
                 }
                 if (json.has("personality")) {
                     String p = json.getString("personality");
-                    if (!p.isEmpty()) {
-                        prefs.edit().putString(KEY_PERSONALITY, p).apply();
-                        webSocketManager.setPersonality(p);
+                    if (p != null && !p.isEmpty()) {
+                        fetchedPersonality = p;
                     }
                 }
-                if (!keySet) {
-                    Log.w(TAG, "Admin panel has no valid API key set");
+
+                if (fetchedKey != null) {
+                    prefs.edit().putString(KEY_API_KEY, fetchedKey).apply();
+                    Log.d(TAG, "API key fetched from admin panel: " + fetchedKey.substring(0, Math.min(10, fetchedKey.length())) + "...");
+                } else {
+                    Log.w(TAG, "Admin panel returned no valid API key");
                     mainHandler.post(() -> {
                         chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
                         scrollToBottom();
                     });
                 }
+                if (fetchedPersonality != null) {
+                    prefs.edit().putString(KEY_PERSONALITY, fetchedPersonality).apply();
+                    webSocketManager.setPersonality(fetchedPersonality);
+                }
+                Log.d(TAG, "Settings fetch complete. Key found: " + (fetchedKey != null));
             } catch (Exception e) {
-                Log.e(TAG, "Failed to fetch API settings: " + e.getMessage());
+                Log.e(TAG, "Failed to fetch API settings: " + e.getMessage(), e);
+                mainHandler.post(() -> {
+                    String savedKey = prefs.getString(KEY_API_KEY, "");
+                    if (TextUtils.isEmpty(savedKey) || "YOUR_API_KEY_HERE".equals(savedKey)) {
+                        chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+                        scrollToBottom();
+                    }
+                });
             }
         }).start();
     }
