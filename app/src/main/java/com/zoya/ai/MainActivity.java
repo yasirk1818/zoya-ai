@@ -88,10 +88,14 @@ public class MainActivity extends AppCompatActivity
         setupClickListeners();
         setupChatRecyclerView();
 
-        // Set default API key if none saved
-        String savedKey = prefs.getString(KEY_API_KEY, "");
-        if (TextUtils.isEmpty(savedKey)) {
+        // Always force the built-in API key (prevents using old blocked cached keys)
+        if (!"YOUR_API_KEY_HERE".equals(DEFAULT_API_KEY)) {
             prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
+        } else {
+            String savedKey = prefs.getString(KEY_API_KEY, "");
+            if (TextUtils.isEmpty(savedKey)) {
+                showApiKeyOverlay();
+            }
         }
 
         // Request mic permission immediately on launch
@@ -254,7 +258,8 @@ public class MainActivity extends AppCompatActivity
 
     private void startSession() {
         String apiKey = prefs.getString(KEY_API_KEY, "");
-        debugToast("API key length: " + (apiKey != null ? apiKey.length() : "null"));
+        String keyPreview = (apiKey != null && apiKey.length() > 10) ? apiKey.substring(0, 10) + "..." : "null";
+        debugToast("API key: " + keyPreview + " (len=" + (apiKey != null ? apiKey.length() : 0) + ")");
 
         if (TextUtils.isEmpty(apiKey) || "YOUR_API_KEY_HERE".equals(apiKey)) {
             debugToast("No API key! Showing overlay...");
