@@ -50,7 +50,9 @@ public class GeminiWebSocketManager {
 
     public GeminiWebSocketManager() {
         client = new OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
                 .pingInterval(20, TimeUnit.SECONDS)
                 .build();
         gson = new Gson();

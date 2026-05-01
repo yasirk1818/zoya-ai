@@ -5,10 +5,12 @@ import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.AnimationUtils;
@@ -18,6 +20,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -33,12 +36,15 @@ public class MainActivity extends AppCompatActivity
     private static final int PERMISSION_REQUEST_CODE = 100;
     private static final String PREFS_NAME = "zoya_prefs";
     private static final String KEY_API_KEY = "api_key";
+    private static final String DEFAULT_API_KEY = "AIzaSyB8F9JruBh5O-nBnWjgGsuccTPLNtyHn8A";
 
     // State
     private enum AppState { IDLE, LISTENING, PROCESSING, SPEAKING }
     private AppState currentState = AppState.IDLE;
     private boolean sessionActive = false;
     private boolean textInputVisible = false;
+    private boolean pendingTextMessage = false;
+    private String pendingText = null;
 
     // Managers
     private GeminiWebSocketManager webSocketManager;
@@ -80,11 +86,14 @@ public class MainActivity extends AppCompatActivity
         setupClickListeners();
         setupChatRecyclerView();
 
-        // Check if API key exists
+        // Set default API key if none saved
         String savedKey = prefs.getString(KEY_API_KEY, "");
         if (TextUtils.isEmpty(savedKey)) {
-            showApiKeyOverlay();
+            prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
         }
+
+        // Request mic permission immediately on launch
+        requestMicPermission();
     }
 
     private void initViews() {
@@ -161,6 +170,7 @@ public class MainActivity extends AppCompatActivity
             if (!TextUtils.isEmpty(key)) {
                 prefs.edit().putString(KEY_API_KEY, key).apply();
                 hideApiKeyOverlay();
+                Toast.makeText(this, "API Key saved!", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -171,7 +181,7 @@ public class MainActivity extends AppCompatActivity
 
         findViewById(R.id.btnPermissionRefresh).setOnClickListener(v -> {
             permissionOverlay.setVisibility(View.GONE);
-            checkAndRequestPermission();
+            requestMicPermission();
         });
     }
 
@@ -181,6 +191,42 @@ public class MainActivity extends AppCompatActivity
         layoutManager.setStackFromEnd(true);
         chatRecyclerView.setLayoutManager(layoutManager);
         chatRecyclerView.setAdapter(chatAdapter);
+    }
+
+    // ========================
+    // Permissions
+    // ========================
+
+    private void requestMicPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "Mic permission already granted");
+            return;
+        }
+
+        Log.d(TAG, "Requesting mic permission");
+        ActivityCompat.requestPermissions(this,
+                new String[]{Manifest.permission.RECORD_AUDIO}, PERMISSION_REQUEST_CODE);
+    }
+
+    private boolean hasMicPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "Mic permission granted");
+                Toast.makeText(this, "Microphone enabled!", Toast.LENGTH_SHORT).show();
+            } else {
+                Log.w(TAG, "Mic permission denied");
+                showPermissionDialog();
+            }
+        }
     }
 
     // ========================
@@ -194,23 +240,39 @@ public class MainActivity extends AppCompatActivity
             return;
         }
 
-        if (!checkAndRequestPermission()) {
+        if (!hasMicPermission()) {
+            Toast.makeText(this, "Microphone permission required!", Toast.LENGTH_SHORT).show();
+            requestMicPermission();
             return;
         }
 
-        sessionActive = true;
-        btnSession.setText("END SESSION");
-        btnSession.setBackgroundResource(R.drawable.bg_session_button_active);
-        btnSession.setTextColor(ContextCompat.getColor(this, R.color.red_stop));
+        try {
+            sessionActive = true;
+            btnSession.setText("END SESSION");
+            btnSession.setBackgroundResource(R.drawable.bg_session_button_active);
+            btnSession.setTextColor(ContextCompat.getColor(this, R.color.red_stop));
 
-        updateState(AppState.PROCESSING);
-        webSocketManager.connect(apiKey);
+            updateState(AppState.PROCESSING);
+            Toast.makeText(this, "Connecting to Zoya...", Toast.LENGTH_SHORT).show();
+            webSocketManager.connect(apiKey);
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting session: " + e.getMessage(), e);
+            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            stopSession();
+        }
     }
 
     private void stopSession() {
         sessionActive = false;
-        webSocketManager.disconnect();
-        audioManager.release();
+        pendingTextMessage = false;
+        pendingText = null;
+
+        try {
+            webSocketManager.disconnect();
+            audioManager.release();
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping session: " + e.getMessage(), e);
+        }
 
         btnSession.setText("START SESSION");
         btnSession.setBackgroundResource(R.drawable.bg_session_button);
@@ -227,7 +289,6 @@ public class MainActivity extends AppCompatActivity
         currentState = newState;
 
         mainHandler.post(() -> {
-            // Update visualizer
             switch (newState) {
                 case IDLE:
                     visualizer.setState(ZoyaVisualizerView.State.IDLE);
@@ -242,14 +303,11 @@ public class MainActivity extends AppCompatActivity
                     visualizer.setState(ZoyaVisualizerView.State.SPEAKING);
                     break;
             }
-
-            // Update status indicators
             updateStatusIndicators(newState);
         });
     }
 
     private void updateStatusIndicators(AppState state) {
-        // Listening indicator
         if (state == AppState.LISTENING) {
             showViewAnimated(listeningIndicator);
             startDotPulse();
@@ -258,7 +316,6 @@ public class MainActivity extends AppCompatActivity
             stopDotPulse();
         }
 
-        // Replying indicator
         if (state == AppState.PROCESSING || state == AppState.SPEAKING) {
             showViewAnimated(replyingIndicator);
         } else {
@@ -307,13 +364,24 @@ public class MainActivity extends AppCompatActivity
         String text = textInput.getText().toString().trim();
         if (TextUtils.isEmpty(text)) return;
 
-        if (!sessionActive) {
-            startSession();
-        }
-
         chatAdapter.addMessage(new ChatMessage(text, ChatMessage.TYPE_USER));
         scrollToBottom();
         textInput.setText("");
+
+        if (!sessionActive) {
+            // Save the text to send after session is established
+            pendingTextMessage = true;
+            pendingText = text;
+            startSession();
+            return;
+        }
+
+        if (!webSocketManager.isSetupComplete()) {
+            pendingTextMessage = true;
+            pendingText = text;
+            Toast.makeText(this, "Connecting... message will be sent shortly", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
         updateState(AppState.PROCESSING);
         webSocketManager.sendTextMessage(text);
@@ -325,15 +393,33 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onConnected() {
-        // Wait for setup complete
+        Log.d(TAG, "WebSocket connected");
+        mainHandler.post(() ->
+                Toast.makeText(this, "Connected! Setting up...", Toast.LENGTH_SHORT).show());
     }
 
     @Override
     public void onSetupComplete() {
+        Log.d(TAG, "Setup complete, starting audio");
         mainHandler.post(() -> {
+            Toast.makeText(this, "Zoya is ready! Start speaking...", Toast.LENGTH_SHORT).show();
             updateState(AppState.LISTENING);
-            audioManager.startRecording();
-            audioManager.startPlayback();
+
+            try {
+                audioManager.startRecording();
+                audioManager.startPlayback();
+            } catch (Exception e) {
+                Log.e(TAG, "Error starting audio: " + e.getMessage(), e);
+                Toast.makeText(this, "Audio error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+
+            // Send any pending text message
+            if (pendingTextMessage && pendingText != null) {
+                updateState(AppState.PROCESSING);
+                webSocketManager.sendTextMessage(pendingText);
+                pendingTextMessage = false;
+                pendingText = null;
+            }
         });
     }
 
@@ -365,9 +451,12 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onError(String error) {
+        Log.e(TAG, "WebSocket error: " + error);
         mainHandler.post(() -> {
-            chatAdapter.addMessage(new ChatMessage("Connection error: " + error, ChatMessage.TYPE_ZOYA));
+            String msg = error != null ? error : "Unknown error";
+            chatAdapter.addMessage(new ChatMessage("Connection error: " + msg, ChatMessage.TYPE_ZOYA));
             scrollToBottom();
+            Toast.makeText(this, "Error: " + msg, Toast.LENGTH_LONG).show();
             if (sessionActive) {
                 stopSession();
             }
@@ -376,8 +465,10 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onDisconnected() {
+        Log.d(TAG, "WebSocket disconnected");
         mainHandler.post(() -> {
             if (sessionActive) {
+                Toast.makeText(this, "Disconnected", Toast.LENGTH_SHORT).show();
                 stopSession();
             }
         });
@@ -392,46 +483,13 @@ public class MainActivity extends AppCompatActivity
     }
 
     // ========================
-    // Permissions
+    // Overlays
     // ========================
-
-    private boolean checkAndRequestPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                == PackageManager.PERMISSION_GRANTED) {
-            return true;
-        }
-
-        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
-            showPermissionDialog();
-            return false;
-        }
-
-        ActivityCompat.requestPermissions(this,
-                new String[]{Manifest.permission.RECORD_AUDIO}, PERMISSION_REQUEST_CODE);
-        return false;
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startSession();
-            } else {
-                showPermissionDialog();
-            }
-        }
-    }
 
     private void showPermissionDialog() {
         permissionOverlay.setVisibility(View.VISIBLE);
         permissionOverlay.startAnimation(AnimationUtils.loadAnimation(this, R.anim.fade_in));
     }
-
-    // ========================
-    // API Key Overlay
-    // ========================
 
     private void showApiKeyOverlay() {
         apiKeyOverlay.setVisibility(View.VISIBLE);
@@ -451,6 +509,7 @@ public class MainActivity extends AppCompatActivity
         boolean muted = !audioManager.isMuted();
         audioManager.setMuted(muted);
         muteIcon.setText(muted ? "🔇" : "🔊");
+        Toast.makeText(this, muted ? "Muted" : "Unmuted", Toast.LENGTH_SHORT).show();
     }
 
     // ========================
