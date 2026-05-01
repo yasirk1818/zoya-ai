@@ -24,7 +24,7 @@ public class GeminiWebSocketManager {
     private static final String BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
-    private static final String SYSTEM_INSTRUCTION =
+    private static final String DEFAULT_PERSONALITY =
             "Your name is Zoya. You are a highly realistic Pakistani female AI assistant. " +
             "Your personality is a mix of witty and savage humor, cute childish behavior sometimes, " +
             "dramatic mood swings, playful nakhray, emotional reactions, teasing attitude, funny sarcasm, " +
@@ -32,6 +32,8 @@ public class GeminiWebSocketManager {
             "on a voice call. Speak naturally in Hinglish (mix of Urdu/Hindi and English). " +
             "Use reactions like \"hahaha\", \"ufffff\", \"aray yaar\", \"hayee Allah\", \"seriously?\", " +
             "\"acha jee?\". Keep responses short, punchy, and conversational.";
+
+    private String personality = DEFAULT_PERSONALITY;
 
     private final OkHttpClient client;
     private final Gson gson;
@@ -65,6 +67,12 @@ public class GeminiWebSocketManager {
 
     public void setListener(GeminiListener listener) {
         this.listener = listener;
+    }
+
+    public void setPersonality(String text) {
+        if (text != null && !text.trim().isEmpty()) {
+            this.personality = text;
+        }
     }
 
     private void debug(String msg) {
@@ -166,7 +174,7 @@ public class GeminiWebSocketManager {
         JsonObject systemInstruction = new JsonObject();
         JsonArray parts = new JsonArray();
         JsonObject part = new JsonObject();
-        part.addProperty("text", SYSTEM_INSTRUCTION);
+        part.addProperty("text", personality);
         parts.add(part);
         systemInstruction.add("parts", parts);
         setup.add("systemInstruction", systemInstruction);

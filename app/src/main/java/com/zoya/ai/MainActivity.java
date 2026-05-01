@@ -36,7 +36,10 @@ public class MainActivity extends AppCompatActivity
     private static final int PERMISSION_REQUEST_CODE = 100;
     private static final String PREFS_NAME = "zoya_prefs";
     private static final String KEY_API_KEY = "api_key";
+    private static final String KEY_API_URL = "api_url";
+    private static final String KEY_PERSONALITY = "personality";
     private static final String DEFAULT_API_KEY = "YOUR_API_KEY_HERE";
+    private static final String DEFAULT_API_URL = "";
 
     // State
     private enum AppState { IDLE, LISTENING, PROCESSING, SPEAKING }
@@ -62,6 +65,7 @@ public class MainActivity extends AppCompatActivity
     private TextView muteIcon;
     private FrameLayout apiKeyOverlay;
     private EditText apiKeyInput;
+    private EditText apiUrlInput;
     private FrameLayout permissionOverlay;
     private LinearLayout listeningIndicator;
     private LinearLayout replyingIndicator;
@@ -88,8 +92,11 @@ public class MainActivity extends AppCompatActivity
         setupClickListeners();
         setupChatRecyclerView();
 
-        // Always force the built-in API key (prevents using old blocked cached keys)
-        if (!"YOUR_API_KEY_HERE".equals(DEFAULT_API_KEY)) {
+        // Try to fetch settings from API URL if configured
+        String apiUrl = prefs.getString(KEY_API_URL, DEFAULT_API_URL);
+        if (!TextUtils.isEmpty(apiUrl)) {
+            fetchSettingsFromApi(apiUrl);
+        } else if (!"YOUR_API_KEY_HERE".equals(DEFAULT_API_KEY)) {
             prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
         } else {
             String savedKey = prefs.getString(KEY_API_KEY, "");
@@ -111,6 +118,7 @@ public class MainActivity extends AppCompatActivity
         muteIcon = findViewById(R.id.muteIcon);
         apiKeyOverlay = findViewById(R.id.apiKeyOverlay);
         apiKeyInput = findViewById(R.id.apiKeyInput);
+        apiUrlInput = findViewById(R.id.apiUrlInput);
         permissionOverlay = findViewById(R.id.permissionOverlay);
         listeningIndicator = findViewById(R.id.listeningIndicator);
         replyingIndicator = findViewById(R.id.replyingIndicator);
@@ -179,13 +187,24 @@ public class MainActivity extends AppCompatActivity
             return false;
         });
 
-        // API key save
+        // API key / URL save
         findViewById(R.id.btnSaveApiKey).setOnClickListener(v -> {
+            String url = apiUrlInput.getText().toString().trim();
             String key = apiKeyInput.getText().toString().trim();
-            if (!TextUtils.isEmpty(key)) {
-                prefs.edit().putString(KEY_API_KEY, key).apply();
+
+            if (!TextUtils.isEmpty(url)) {
+                // API URL mode - fetch key + personality from admin panel
+                prefs.edit().putString(KEY_API_URL, url).apply();
+                hideApiKeyOverlay();
+                Toast.makeText(this, "Connecting to admin panel...", Toast.LENGTH_SHORT).show();
+                fetchSettingsFromApi(url);
+            } else if (!TextUtils.isEmpty(key)) {
+                // Direct API key mode
+                prefs.edit().putString(KEY_API_KEY, key).putString(KEY_API_URL, "").apply();
                 hideApiKeyOverlay();
                 Toast.makeText(this, "API Key saved!", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Enter API URL or API Key!", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -245,6 +264,42 @@ public class MainActivity extends AppCompatActivity
     }
 
     // ========================
+    // API Settings Fetch
+    // ========================
+
+    private void fetchSettingsFromApi(String apiUrl) {
+        new Thread(() -> {
+            try {
+                okhttp3.OkHttpClient httpClient = new okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+                okhttp3.Request request = new okhttp3.Request.Builder().url(apiUrl).build();
+                okhttp3.Response response = httpClient.newCall(request).execute();
+                String body = response.body().string();
+                org.json.JSONObject json = new org.json.JSONObject(body);
+
+                if (json.has("api_key")) {
+                    String key = json.getString("api_key");
+                    if (!key.isEmpty() && !"YOUR_API_KEY_HERE".equals(key)) {
+                        prefs.edit().putString(KEY_API_KEY, key).apply();
+                    }
+                }
+                if (json.has("personality")) {
+                    String p = json.getString("personality");
+                    if (!p.isEmpty()) {
+                        prefs.edit().putString(KEY_PERSONALITY, p).apply();
+                        webSocketManager.setPersonality(p);
+                    }
+                }
+                Log.d(TAG, "Settings fetched from API");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to fetch API settings: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    // ========================
     // Session Management
     // ========================
 
@@ -258,6 +313,12 @@ public class MainActivity extends AppCompatActivity
         if (TextUtils.isEmpty(apiKey) || "YOUR_API_KEY_HERE".equals(apiKey)) {
             showApiKeyOverlay();
             return;
+        }
+
+        // Apply saved personality
+        String personality = prefs.getString(KEY_PERSONALITY, "");
+        if (!personality.isEmpty()) {
+            webSocketManager.setPersonality(personality);
         }
 
         if (!hasMicPermission()) {
