@@ -39,7 +39,7 @@ public class MainActivity extends AppCompatActivity
     private static final String KEY_API_URL = "api_url";
     private static final String KEY_PERSONALITY = "personality";
     private static final String DEFAULT_API_KEY = "YOUR_API_KEY_HERE";
-    private static final String DEFAULT_API_URL = "";
+    private static final String DEFAULT_API_URL = "https://fyroplayer.com/zoya-admin/api.php";
 
     // State
     private enum AppState { IDLE, LISTENING, PROCESSING, SPEAKING }
