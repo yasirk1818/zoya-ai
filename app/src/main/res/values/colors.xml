@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#FF050505</color>
+    <color name="violet">#FF8B5CF6</color>
+    <color name="pink">#FFEC4899</color>
+    <color name="cyan">#FF06B6D4</color>
+    <color name="sky_blue">#FF38BDF8</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="white_70">#B3FFFFFF</color>
+    <color name="white_50">#80FFFFFF</color>
+    <color name="white_30">#4DFFFFFF</color>
+    <color name="white_20">#33FFFFFF</color>
+    <color name="white_10">#1AFFFFFF</color>
+    <color name="transparent">#00000000</color>
+    <color name="user_bubble">#332F1B7A</color>
+    <color name="zoya_bubble">#33FFFFFF</color>
+    <color name="red_stop">#FFEF4444</color>
+    <color name="red_stop_bg">#33EF4444</color>
+</resources>
