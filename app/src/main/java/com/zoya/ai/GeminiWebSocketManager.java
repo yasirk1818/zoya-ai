@@ -4,6 +4,7 @@ import android.util.Base64;
 import android.util.Log;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -13,6 +14,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
+import okio.ByteString;
 
 import java.util.concurrent.TimeUnit;
 
@@ -36,7 +38,9 @@ public class GeminiWebSocketManager {
     private WebSocket webSocket;
     private GeminiListener listener;
     private boolean setupComplete = false;
-    private android.os.Handler timeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private String currentApiKey;
+    private int connectAttempt = 0;
+    private final android.os.Handler timeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     public interface GeminiListener {
         void onConnected();
@@ -56,7 +60,7 @@ public class GeminiWebSocketManager {
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build();
-        gson = new Gson();
+        gson = new GsonBuilder().disableHtmlEscaping().create();
     }
 
     public void setListener(GeminiListener listener) {
@@ -70,6 +74,7 @@ public class GeminiWebSocketManager {
 
     public void connect(String apiKey) {
         setupComplete = false;
+        currentApiKey = apiKey;
         String url = BASE_URL + "?key=" + apiKey;
 
         debug("Step 1: Connecting to Gemini WebSocket...");
@@ -89,8 +94,14 @@ public class GeminiWebSocketManager {
             @Override
             public void onMessage(WebSocket ws, String text) {
                 String preview = text.substring(0, Math.min(300, text.length()));
-                debug("Step 4: Server message: " + preview);
+                debug("Step 4: Server TEXT msg: " + preview);
                 handleMessage(text);
+            }
+
+            @Override
+            public void onMessage(WebSocket ws, ByteString bytes) {
+                debug("Step 4: Server BINARY msg: " + bytes.size() + " bytes");
+                handleMessage(bytes.utf8());
             }
 
             @Override
@@ -98,9 +109,6 @@ public class GeminiWebSocketManager {
                 String errorMsg = t.getMessage();
                 if (response != null) {
                     errorMsg += " (HTTP " + response.code() + ")";
-                    try {
-                        errorMsg += " body=" + response.body().string().substring(0, 200);
-                    } catch (Exception ignored) {}
                 }
                 debug("FAIL: WebSocket error: " + errorMsg);
                 Log.e(TAG, "WebSocket error: " + errorMsg, t);
@@ -119,17 +127,18 @@ public class GeminiWebSocketManager {
             }
         });
 
-        // Setup timeout - if setupComplete doesn't arrive in 15 seconds, report
+        // Setup timeout - if no setupComplete in 15s, disconnect and reconnect fresh
         timeoutHandler.postDelayed(() -> {
             if (!setupComplete && webSocket != null) {
-                debug("TIMEOUT: No setupComplete after 15 seconds! Retrying...");
-                sendSetupMessage();
-                // Second timeout
-                timeoutHandler.postDelayed(() -> {
-                    if (!setupComplete) {
-                        debug("TIMEOUT: Still no setupComplete after retry! Check API key and network.");
-                    }
-                }, 15000);
+                if (connectAttempt < 3) {
+                    connectAttempt++;
+                    debug("TIMEOUT: No setupComplete! Reconnecting fresh (attempt " + connectAttempt + ")...");
+                    try { webSocket.cancel(); } catch (Exception ignored) {}
+                    webSocket = null;
+                    connect(currentApiKey);
+                } else {
+                    debug("TIMEOUT: 3 attempts failed! Check API key and network.");
+                }
             }
         }, 15000);
     }
