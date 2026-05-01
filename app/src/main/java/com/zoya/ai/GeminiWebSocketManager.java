@@ -108,7 +108,7 @@ public class GeminiWebSocketManager {
         // Use the correct API field names (camelCase)
         JsonObject msg = new JsonObject();
         JsonObject config = new JsonObject();
-        config.addProperty("model", "models/gemini-2.0-flash-live-001");
+        config.addProperty("model", "models/gemini-2.5-flash-native-audio-latest");
 
         // Response modalities
         JsonArray modalities = new JsonArray();
