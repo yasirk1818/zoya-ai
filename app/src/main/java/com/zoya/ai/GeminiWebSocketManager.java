@@ -66,6 +66,8 @@ public class GeminiWebSocketManager {
         setupComplete = false;
         String url = BASE_URL + "?key=" + apiKey;
 
+        Log.d(TAG, "Connecting to WebSocket...");
+
         Request request = new Request.Builder()
                 .url(url)
                 .build();
@@ -73,65 +75,71 @@ public class GeminiWebSocketManager {
         webSocket = client.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(WebSocket ws, Response response) {
-                Log.d(TAG, "WebSocket connected");
+                Log.d(TAG, "WebSocket connected, sending config...");
                 if (listener != null) listener.onConnected();
                 sendSetupMessage();
             }
 
             @Override
             public void onMessage(WebSocket ws, String text) {
+                Log.d(TAG, "Received: " + text.substring(0, Math.min(500, text.length())));
                 handleMessage(text);
             }
 
             @Override
             public void onFailure(WebSocket ws, Throwable t, Response response) {
-                Log.e(TAG, "WebSocket error: " + t.getMessage());
-                if (listener != null) listener.onError(t.getMessage());
+                String errorMsg = t.getMessage();
+                if (response != null) {
+                    errorMsg += " (HTTP " + response.code() + ")";
+                }
+                Log.e(TAG, "WebSocket error: " + errorMsg, t);
+                if (listener != null) listener.onError(errorMsg);
             }
 
             @Override
             public void onClosed(WebSocket ws, int code, String reason) {
-                Log.d(TAG, "WebSocket closed: " + reason);
+                Log.d(TAG, "WebSocket closed: " + code + " " + reason);
                 if (listener != null) listener.onDisconnected();
             }
         });
     }
 
     private void sendSetupMessage() {
-        JsonObject setup = new JsonObject();
-        JsonObject setupData = new JsonObject();
-        setupData.addProperty("model", "models/gemini-2.0-flash-live-001");
+        // Use the correct API field names (camelCase)
+        JsonObject msg = new JsonObject();
+        JsonObject config = new JsonObject();
+        config.addProperty("model", "models/gemini-2.0-flash-live-001");
 
-        // Generation config
-        JsonObject genConfig = new JsonObject();
+        // Response modalities
         JsonArray modalities = new JsonArray();
         modalities.add("AUDIO");
-        genConfig.add("response_modalities", modalities);
+        config.add("responseModalities", modalities);
 
+        // Speech config
         JsonObject speechConfig = new JsonObject();
         JsonObject voiceConfig = new JsonObject();
-        JsonObject prebuiltVoice = new JsonObject();
-        prebuiltVoice.addProperty("voice_name", "Kore");
-        voiceConfig.add("prebuilt_voice_config", prebuiltVoice);
-        speechConfig.add("voice_config", voiceConfig);
-        genConfig.add("speech_config", speechConfig);
-
-        setupData.add("generation_config", genConfig);
+        JsonObject prebuiltVoiceConfig = new JsonObject();
+        prebuiltVoiceConfig.addProperty("voiceName", "Kore");
+        voiceConfig.add("prebuiltVoiceConfig", prebuiltVoiceConfig);
+        speechConfig.add("voiceConfig", voiceConfig);
+        config.add("speechConfig", speechConfig);
 
         // System instruction
-        JsonObject sysInstruction = new JsonObject();
+        JsonObject systemInstruction = new JsonObject();
         JsonArray parts = new JsonArray();
         JsonObject part = new JsonObject();
         part.addProperty("text", SYSTEM_INSTRUCTION);
         parts.add(part);
-        sysInstruction.add("parts", parts);
-        setupData.add("system_instruction", sysInstruction);
+        systemInstruction.add("parts", parts);
+        config.add("systemInstruction", systemInstruction);
 
-        setup.add("setup", setupData);
+        // Wrap in "setup" envelope
+        msg.add("setup", config);
 
-        String json = gson.toJson(setup);
-        Log.d(TAG, "Sending setup: " + json.substring(0, Math.min(200, json.length())));
-        webSocket.send(json);
+        String json = gson.toJson(msg);
+        Log.d(TAG, "Sending setup: " + json.substring(0, Math.min(300, json.length())));
+        boolean sent = webSocket.send(json);
+        Log.d(TAG, "Setup message sent: " + sent);
     }
 
     private void handleMessage(String text) {
@@ -141,7 +149,7 @@ public class GeminiWebSocketManager {
             // Setup complete response
             if (msg.has("setupComplete")) {
                 setupComplete = true;
-                Log.d(TAG, "Setup complete");
+                Log.d(TAG, "Setup complete!");
                 if (listener != null) listener.onSetupComplete();
                 return;
             }
@@ -181,13 +189,32 @@ public class GeminiWebSocketManager {
                     }
                 }
 
+                // Output transcription
+                if (serverContent.has("outputTranscription")) {
+                    JsonObject transcription = serverContent.getAsJsonObject("outputTranscription");
+                    if (transcription.has("text")) {
+                        String responseText = transcription.get("text").getAsString();
+                        if (listener != null) listener.onTextResponse(responseText);
+                    }
+                }
+
                 // Turn complete
                 if (serverContent.has("turnComplete") && serverContent.get("turnComplete").getAsBoolean()) {
+                    Log.d(TAG, "Turn complete");
                     if (listener != null) listener.onTurnComplete();
                 }
             }
+
+            // Handle error responses from server
+            if (msg.has("error")) {
+                JsonObject error = msg.getAsJsonObject("error");
+                String errorMsg = error.has("message") ? error.get("message").getAsString() : "Unknown server error";
+                int code = error.has("code") ? error.get("code").getAsInt() : -1;
+                Log.e(TAG, "Server error " + code + ": " + errorMsg);
+                if (listener != null) listener.onError("Server error " + code + ": " + errorMsg);
+            }
         } catch (Exception e) {
-            Log.e(TAG, "Error parsing message: " + e.getMessage());
+            Log.e(TAG, "Error parsing message: " + e.getMessage() + " | Raw: " + text.substring(0, Math.min(200, text.length())));
         }
     }
 
@@ -198,12 +225,10 @@ public class GeminiWebSocketManager {
 
         JsonObject msg = new JsonObject();
         JsonObject realtimeInput = new JsonObject();
-        JsonArray mediaChunks = new JsonArray();
-        JsonObject chunk = new JsonObject();
-        chunk.addProperty("mimeType", "audio/pcm;rate=16000");
-        chunk.addProperty("data", base64Data);
-        mediaChunks.add(chunk);
-        realtimeInput.add("mediaChunks", mediaChunks);
+        JsonObject audio = new JsonObject();
+        audio.addProperty("data", base64Data);
+        audio.addProperty("mimeType", "audio/pcm;rate=16000");
+        realtimeInput.add("audio", audio);
         msg.add("realtimeInput", realtimeInput);
 
         webSocket.send(gson.toJson(msg));
@@ -229,12 +254,17 @@ public class GeminiWebSocketManager {
         clientContent.addProperty("turnComplete", true);
         msg.add("clientContent", clientContent);
 
+        Log.d(TAG, "Sending text: " + userText);
         webSocket.send(gson.toJson(msg));
     }
 
     public void disconnect() {
         if (webSocket != null) {
-            webSocket.close(1000, "Session ended");
+            try {
+                webSocket.close(1000, "Session ended");
+            } catch (Exception e) {
+                Log.e(TAG, "Error closing WebSocket: " + e.getMessage());
+            }
             webSocket = null;
         }
         setupComplete = false;
