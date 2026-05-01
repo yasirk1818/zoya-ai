@@ -5,10 +5,12 @@ import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.AnimationUtils;
@@ -18,6 +20,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -33,16 +36,24 @@ public class MainActivity extends AppCompatActivity
     private static final int PERMISSION_REQUEST_CODE = 100;
     private static final String PREFS_NAME = "zoya_prefs";
     private static final String KEY_API_KEY = "api_key";
+    private static final String KEY_API_URL = "api_url";
+    private static final String KEY_PERSONALITY = "personality";
+    private static final String DEFAULT_API_KEY = "YOUR_API_KEY_HERE";
+    private static final String DEFAULT_API_URL = "https://fyroplayer.com/zoya-admin/api.php";
 
     // State
     private enum AppState { IDLE, LISTENING, PROCESSING, SPEAKING }
     private AppState currentState = AppState.IDLE;
     private boolean sessionActive = false;
     private boolean textInputVisible = false;
+    private boolean pendingTextMessage = false;
+    private String pendingText = null;
 
     // Managers
     private GeminiWebSocketManager webSocketManager;
     private ZoyaAudioManager audioManager;
+    private GeminiTextChatManager textChatManager;
+    private GeminiTTSManager ttsManager;
 
     // Views
     private ZoyaVisualizerView visualizer;
@@ -54,6 +65,7 @@ public class MainActivity extends AppCompatActivity
     private TextView muteIcon;
     private FrameLayout apiKeyOverlay;
     private EditText apiKeyInput;
+    private EditText apiUrlInput;
     private FrameLayout permissionOverlay;
     private LinearLayout listeningIndicator;
     private LinearLayout replyingIndicator;
@@ -80,11 +92,16 @@ public class MainActivity extends AppCompatActivity
         setupClickListeners();
         setupChatRecyclerView();
 
-        // Check if API key exists
-        String savedKey = prefs.getString(KEY_API_KEY, "");
-        if (TextUtils.isEmpty(savedKey)) {
-            showApiKeyOverlay();
+        // Always fetch settings from admin panel API
+        String apiUrl = prefs.getString(KEY_API_URL, DEFAULT_API_URL);
+        if (!TextUtils.isEmpty(apiUrl)) {
+            fetchSettingsFromApi(apiUrl);
+        } else if (!"YOUR_API_KEY_HERE".equals(DEFAULT_API_KEY)) {
+            prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
         }
+
+        // Request mic permission immediately on launch
+        requestMicPermission();
     }
 
     private void initViews() {
@@ -96,6 +113,7 @@ public class MainActivity extends AppCompatActivity
         muteIcon = findViewById(R.id.muteIcon);
         apiKeyOverlay = findViewById(R.id.apiKeyOverlay);
         apiKeyInput = findViewById(R.id.apiKeyInput);
+        apiUrlInput = findViewById(R.id.apiUrlInput);
         permissionOverlay = findViewById(R.id.permissionOverlay);
         listeningIndicator = findViewById(R.id.listeningIndicator);
         replyingIndicator = findViewById(R.id.replyingIndicator);
@@ -103,15 +121,23 @@ public class MainActivity extends AppCompatActivity
     }
 
     private void initManagers() {
+        // Voice session (WebSocket Live API)
         webSocketManager = new GeminiWebSocketManager();
         webSocketManager.setListener(this);
 
+        // Audio I/O
         audioManager = new ZoyaAudioManager();
         audioManager.setAudioCallback(data -> {
             if (sessionActive) {
                 webSocketManager.sendAudioChunk(data);
             }
         });
+
+        // Text chat (REST API - gemini-2.0-flash)
+        textChatManager = new GeminiTextChatManager();
+
+        // TTS (gemini-2.5-flash-preview-tts)
+        ttsManager = new GeminiTTSManager();
     }
 
     private void setupClickListeners() {
@@ -141,6 +167,7 @@ public class MainActivity extends AppCompatActivity
         findViewById(R.id.btnClear).setOnClickListener(v -> {
             animateButtonPress(v);
             chatAdapter.clearMessages();
+            textChatManager.clearHistory();
         });
 
         // Send text
@@ -155,12 +182,24 @@ public class MainActivity extends AppCompatActivity
             return false;
         });
 
-        // API key save
+        // API key / URL save
         findViewById(R.id.btnSaveApiKey).setOnClickListener(v -> {
+            String url = apiUrlInput.getText().toString().trim();
             String key = apiKeyInput.getText().toString().trim();
-            if (!TextUtils.isEmpty(key)) {
-                prefs.edit().putString(KEY_API_KEY, key).apply();
+
+            if (!TextUtils.isEmpty(url)) {
+                // API URL mode - fetch key + personality from admin panel
+                prefs.edit().putString(KEY_API_URL, url).apply();
                 hideApiKeyOverlay();
+                Toast.makeText(this, "Connecting to admin panel...", Toast.LENGTH_SHORT).show();
+                fetchSettingsFromApi(url);
+            } else if (!TextUtils.isEmpty(key)) {
+                // Direct API key mode
+                prefs.edit().putString(KEY_API_KEY, key).putString(KEY_API_URL, "").apply();
+                hideApiKeyOverlay();
+                Toast.makeText(this, "API Key saved!", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Enter API URL or API Key!", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -171,7 +210,7 @@ public class MainActivity extends AppCompatActivity
 
         findViewById(R.id.btnPermissionRefresh).setOnClickListener(v -> {
             permissionOverlay.setVisibility(View.GONE);
-            checkAndRequestPermission();
+            requestMicPermission();
         });
     }
 
@@ -184,33 +223,156 @@ public class MainActivity extends AppCompatActivity
     }
 
     // ========================
+    // Permissions
+    // ========================
+
+    private void requestMicPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "Mic permission already granted");
+            return;
+        }
+
+        Log.d(TAG, "Requesting mic permission");
+        ActivityCompat.requestPermissions(this,
+                new String[]{Manifest.permission.RECORD_AUDIO}, PERMISSION_REQUEST_CODE);
+    }
+
+    private boolean hasMicPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "Mic permission granted");
+                Toast.makeText(this, "Microphone enabled!", Toast.LENGTH_SHORT).show();
+            } else {
+                Log.w(TAG, "Mic permission denied");
+                showPermissionDialog();
+            }
+        }
+    }
+
+    // ========================
+    // API Settings Fetch
+    // ========================
+
+    private void fetchSettingsFromApi(String apiUrl) {
+        new Thread(() -> {
+            try {
+                okhttp3.OkHttpClient httpClient = new okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+                okhttp3.Request request = new okhttp3.Request.Builder().url(apiUrl).build();
+                okhttp3.Response response = httpClient.newCall(request).execute();
+                String body = response.body().string();
+                org.json.JSONObject json = new org.json.JSONObject(body);
+
+                String fetchedKey = null;
+                String fetchedPersonality = null;
+
+                if (json.has("api_key")) {
+                    String key = json.getString("api_key");
+                    if (key != null && !key.isEmpty() && !"YOUR_API_KEY_HERE".equals(key)) {
+                        fetchedKey = key;
+                    }
+                }
+                if (json.has("personality")) {
+                    String p = json.getString("personality");
+                    if (p != null && !p.isEmpty()) {
+                        fetchedPersonality = p;
+                    }
+                }
+
+                if (fetchedKey != null) {
+                    prefs.edit().putString(KEY_API_KEY, fetchedKey).apply();
+                    Log.d(TAG, "API key fetched from admin panel: " + fetchedKey.substring(0, Math.min(10, fetchedKey.length())) + "...");
+                } else {
+                    Log.w(TAG, "Admin panel returned no valid API key");
+                    mainHandler.post(() -> {
+                        chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+                        scrollToBottom();
+                    });
+                }
+                if (fetchedPersonality != null) {
+                    prefs.edit().putString(KEY_PERSONALITY, fetchedPersonality).apply();
+                    webSocketManager.setPersonality(fetchedPersonality);
+                }
+                Log.d(TAG, "Settings fetch complete. Key found: " + (fetchedKey != null));
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to fetch API settings: " + e.getMessage(), e);
+                mainHandler.post(() -> {
+                    String savedKey = prefs.getString(KEY_API_KEY, "");
+                    if (TextUtils.isEmpty(savedKey) || "YOUR_API_KEY_HERE".equals(savedKey)) {
+                        chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+                        scrollToBottom();
+                    }
+                });
+            }
+        }).start();
+    }
+
+    // ========================
     // Session Management
     // ========================
 
+    private void debugLog(String msg) {
+        Log.d(TAG, msg);
+    }
+
     private void startSession() {
         String apiKey = prefs.getString(KEY_API_KEY, "");
-        if (TextUtils.isEmpty(apiKey)) {
-            showApiKeyOverlay();
+
+        if (TextUtils.isEmpty(apiKey) || "YOUR_API_KEY_HERE".equals(apiKey)) {
+            chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+            scrollToBottom();
             return;
         }
 
-        if (!checkAndRequestPermission()) {
+        // Apply saved personality
+        String personality = prefs.getString(KEY_PERSONALITY, "");
+        if (!personality.isEmpty()) {
+            webSocketManager.setPersonality(personality);
+        }
+
+        if (!hasMicPermission()) {
+            Toast.makeText(this, "Microphone permission required!", Toast.LENGTH_SHORT).show();
+            requestMicPermission();
             return;
         }
 
-        sessionActive = true;
-        btnSession.setText("END SESSION");
-        btnSession.setBackgroundResource(R.drawable.bg_session_button_active);
-        btnSession.setTextColor(ContextCompat.getColor(this, R.color.red_stop));
+        try {
+            sessionActive = true;
+            btnSession.setText("END SESSION");
+            btnSession.setBackgroundResource(R.drawable.bg_session_button_active);
+            btnSession.setTextColor(ContextCompat.getColor(this, R.color.red_stop));
 
-        updateState(AppState.PROCESSING);
-        webSocketManager.connect(apiKey);
+            updateState(AppState.PROCESSING);
+            webSocketManager.connect(apiKey);
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting session: " + e.getMessage(), e);
+            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            stopSession();
+        }
     }
 
     private void stopSession() {
         sessionActive = false;
-        webSocketManager.disconnect();
-        audioManager.release();
+        pendingTextMessage = false;
+        pendingText = null;
+
+        try {
+            webSocketManager.disconnect();
+            audioManager.release();
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping session: " + e.getMessage(), e);
+        }
 
         btnSession.setText("START SESSION");
         btnSession.setBackgroundResource(R.drawable.bg_session_button);
@@ -227,7 +389,6 @@ public class MainActivity extends AppCompatActivity
         currentState = newState;
 
         mainHandler.post(() -> {
-            // Update visualizer
             switch (newState) {
                 case IDLE:
                     visualizer.setState(ZoyaVisualizerView.State.IDLE);
@@ -242,14 +403,11 @@ public class MainActivity extends AppCompatActivity
                     visualizer.setState(ZoyaVisualizerView.State.SPEAKING);
                     break;
             }
-
-            // Update status indicators
             updateStatusIndicators(newState);
         });
     }
 
     private void updateStatusIndicators(AppState state) {
-        // Listening indicator
         if (state == AppState.LISTENING) {
             showViewAnimated(listeningIndicator);
             startDotPulse();
@@ -258,7 +416,6 @@ public class MainActivity extends AppCompatActivity
             stopDotPulse();
         }
 
-        // Replying indicator
         if (state == AppState.PROCESSING || state == AppState.SPEAKING) {
             showViewAnimated(replyingIndicator);
         } else {
@@ -307,33 +464,123 @@ public class MainActivity extends AppCompatActivity
         String text = textInput.getText().toString().trim();
         if (TextUtils.isEmpty(text)) return;
 
-        if (!sessionActive) {
-            startSession();
-        }
-
         chatAdapter.addMessage(new ChatMessage(text, ChatMessage.TYPE_USER));
         scrollToBottom();
         textInput.setText("");
 
+        // If voice session is active, send through WebSocket
+        if (sessionActive) {
+            if (!webSocketManager.isSetupComplete()) {
+                pendingTextMessage = true;
+                pendingText = text;
+                Toast.makeText(this, "Connecting... message will be sent shortly", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            updateState(AppState.PROCESSING);
+            webSocketManager.sendTextMessage(text);
+            return;
+        }
+
+        // Voice session is NOT active → use text chat model (gemini-2.0-flash)
+        String apiKey = prefs.getString(KEY_API_KEY, "");
+        if (TextUtils.isEmpty(apiKey)) {
+            chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+            scrollToBottom();
+            return;
+        }
+
         updateState(AppState.PROCESSING);
-        webSocketManager.sendTextMessage(text);
+        Toast.makeText(this, "Zoya soch rahi hai...", Toast.LENGTH_SHORT).show();
+
+        textChatManager.sendMessage(apiKey, text, new GeminiTextChatManager.TextChatCallback() {
+            @Override
+            public void onResponse(String responseText) {
+                mainHandler.post(() -> {
+                    chatAdapter.addMessage(new ChatMessage(responseText, ChatMessage.TYPE_ZOYA));
+                    scrollToBottom();
+
+                    // Now convert response to speech using TTS model
+                    updateState(AppState.SPEAKING);
+                    speakWithTTS(responseText);
+                });
+            }
+
+            @Override
+            public void onError(String error) {
+                mainHandler.post(() -> {
+                    chatAdapter.addMessage(new ChatMessage("Error: " + error, ChatMessage.TYPE_ZOYA));
+                    scrollToBottom();
+                    updateState(AppState.IDLE);
+                    Toast.makeText(MainActivity.this, "Error: " + error, Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void speakWithTTS(String text) {
+        String apiKey = prefs.getString(KEY_API_KEY, "");
+        if (TextUtils.isEmpty(apiKey)) return;
+
+        // Initialize audio for playback if not already
+        try {
+            audioManager.startPlayback();
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting playback: " + e.getMessage());
+        }
+
+        ttsManager.synthesize(apiKey, text, new GeminiTTSManager.TTSCallback() {
+            @Override
+            public void onAudioReady(byte[] pcmData) {
+                audioManager.enqueueAudio(pcmData);
+                mainHandler.post(() -> updateState(AppState.IDLE));
+            }
+
+            @Override
+            public void onError(String error) {
+                Log.e(TAG, "TTS error: " + error);
+                mainHandler.post(() -> {
+                    updateState(AppState.IDLE);
+                    Toast.makeText(MainActivity.this, "TTS: " + error, Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
     }
 
     // ========================
-    // GeminiListener Callbacks
+    // GeminiListener Callbacks (Voice Session)
     // ========================
 
     @Override
     public void onConnected() {
-        // Wait for setup complete
+        debugLog("WebSocket connected");
     }
 
     @Override
     public void onSetupComplete() {
+        debugLog("Setup complete");
         mainHandler.post(() -> {
+            Toast.makeText(this, "Zoya is ready! Start speaking...", Toast.LENGTH_SHORT).show();
             updateState(AppState.LISTENING);
-            audioManager.startRecording();
-            audioManager.startPlayback();
+
+            try {
+                audioManager.startRecording();
+            } catch (Exception e) {
+                Log.e(TAG, "AudioRecord failed: " + e.getMessage(), e);
+            }
+
+            try {
+                audioManager.startPlayback();
+            } catch (Exception e) {
+                Log.e(TAG, "AudioTrack failed: " + e.getMessage(), e);
+            }
+
+            // Send any pending text message
+            if (pendingTextMessage && pendingText != null) {
+                updateState(AppState.PROCESSING);
+                webSocketManager.sendTextMessage(pendingText);
+                pendingTextMessage = false;
+                pendingText = null;
+            }
         });
     }
 
@@ -365,9 +612,12 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onError(String error) {
+        Log.e(TAG, "Error: " + error);
         mainHandler.post(() -> {
-            chatAdapter.addMessage(new ChatMessage("Connection error: " + error, ChatMessage.TYPE_ZOYA));
+            String msg = error != null ? error : "Unknown error";
+            chatAdapter.addMessage(new ChatMessage("Error: " + msg, ChatMessage.TYPE_ZOYA));
             scrollToBottom();
+            Toast.makeText(this, "Error: " + msg, Toast.LENGTH_LONG).show();
             if (sessionActive) {
                 stopSession();
             }
@@ -376,6 +626,7 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onDisconnected() {
+        debugLog("WebSocket disconnected");
         mainHandler.post(() -> {
             if (sessionActive) {
                 stopSession();
@@ -391,47 +642,19 @@ public class MainActivity extends AppCompatActivity
         });
     }
 
-    // ========================
-    // Permissions
-    // ========================
-
-    private boolean checkAndRequestPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                == PackageManager.PERMISSION_GRANTED) {
-            return true;
-        }
-
-        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
-            showPermissionDialog();
-            return false;
-        }
-
-        ActivityCompat.requestPermissions(this,
-                new String[]{Manifest.permission.RECORD_AUDIO}, PERMISSION_REQUEST_CODE);
-        return false;
-    }
-
     @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startSession();
-            } else {
-                showPermissionDialog();
-            }
-        }
+    public void onDebug(String message) {
+        debugLog(message);
     }
+
+    // ========================
+    // Overlays
+    // ========================
 
     private void showPermissionDialog() {
         permissionOverlay.setVisibility(View.VISIBLE);
         permissionOverlay.startAnimation(AnimationUtils.loadAnimation(this, R.anim.fade_in));
     }
-
-    // ========================
-    // API Key Overlay
-    // ========================
 
     private void showApiKeyOverlay() {
         apiKeyOverlay.setVisibility(View.VISIBLE);
@@ -451,6 +674,7 @@ public class MainActivity extends AppCompatActivity
         boolean muted = !audioManager.isMuted();
         audioManager.setMuted(muted);
         muteIcon.setText(muted ? "🔇" : "🔊");
+        Toast.makeText(this, muted ? "Muted" : "Unmuted", Toast.LENGTH_SHORT).show();
     }
 
     // ========================

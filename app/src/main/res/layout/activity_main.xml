@@ -337,9 +337,32 @@
                 android:layout_marginTop="4dp"
                 android:layout_marginBottom="24dp"
                 android:fontFamily="@font/rajdhani_regular"
-                android:text="Apna Gemini API Key dalo shuru karne ke liye"
+                android:text="Admin Panel URL ya API Key dalo"
                 android:textColor="@color/white_50"
                 android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/apiUrlInput"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_api_key_input"
+                android:fontFamily="monospace"
+                android:hint="Admin Panel API URL (optional)"
+                android:inputType="textUri"
+                android:paddingHorizontal="16dp"
+                android:textColor="@color/white"
+                android:textColorHint="@color/white_30"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="4dp"
+                android:text="— ya direct API key —"
+                android:textColor="@color/white_30"
+                android:textSize="12sp"
+                android:layout_gravity="center" />
 
             <EditText
                 android:id="@+id/apiKeyInput"
@@ -347,7 +370,7 @@
                 android:layout_height="52dp"
                 android:background="@drawable/bg_api_key_input"
                 android:fontFamily="monospace"
-                android:hint="API Key"
+                android:hint="Gemini API Key"
                 android:inputType="textPassword"
                 android:paddingHorizontal="16dp"
                 android:textColor="@color/white"
