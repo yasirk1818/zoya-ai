@@ -36,6 +36,7 @@ public class GeminiWebSocketManager {
     private WebSocket webSocket;
     private GeminiListener listener;
     private boolean setupComplete = false;
+    private android.os.Handler timeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     public interface GeminiListener {
         void onConnected();
@@ -87,7 +88,7 @@ public class GeminiWebSocketManager {
 
             @Override
             public void onMessage(WebSocket ws, String text) {
-                String preview = text.substring(0, Math.min(200, text.length()));
+                String preview = text.substring(0, Math.min(300, text.length()));
                 debug("Step 4: Server message: " + preview);
                 handleMessage(text);
             }
@@ -97,10 +98,18 @@ public class GeminiWebSocketManager {
                 String errorMsg = t.getMessage();
                 if (response != null) {
                     errorMsg += " (HTTP " + response.code() + ")";
+                    try {
+                        errorMsg += " body=" + response.body().string().substring(0, 200);
+                    } catch (Exception ignored) {}
                 }
                 debug("FAIL: WebSocket error: " + errorMsg);
                 Log.e(TAG, "WebSocket error: " + errorMsg, t);
                 if (listener != null) listener.onError(errorMsg);
+            }
+
+            @Override
+            public void onClosing(WebSocket ws, int code, String reason) {
+                debug("CLOSING: code=" + code + " reason=" + reason);
             }
 
             @Override
@@ -109,6 +118,20 @@ public class GeminiWebSocketManager {
                 if (listener != null) listener.onDisconnected();
             }
         });
+
+        // Setup timeout - if setupComplete doesn't arrive in 15 seconds, report
+        timeoutHandler.postDelayed(() -> {
+            if (!setupComplete && webSocket != null) {
+                debug("TIMEOUT: No setupComplete after 15 seconds! Retrying...");
+                sendSetupMessage();
+                // Second timeout
+                timeoutHandler.postDelayed(() -> {
+                    if (!setupComplete) {
+                        debug("TIMEOUT: Still no setupComplete after retry! Check API key and network.");
+                    }
+                }, 15000);
+            }
+        }, 15000);
     }
 
     private void sendSetupMessage() {
@@ -145,7 +168,7 @@ public class GeminiWebSocketManager {
         msg.add("setup", setup);
 
         String json = gson.toJson(msg);
-        debug("Step 3: Sending setup (model=gemini-2.5-flash-native-audio-latest, voice=Kore)");
+        debug("Step 3: Setup JSON: " + json.substring(0, Math.min(300, json.length())));
         boolean sent = webSocket.send(json);
         debug("Step 3b: Setup sent=" + sent + ", waiting for setupComplete...");
     }
