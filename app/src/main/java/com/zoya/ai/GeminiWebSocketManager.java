@@ -112,36 +112,37 @@ public class GeminiWebSocketManager {
     }
 
     private void sendSetupMessage() {
-        // Use the correct API field names (camelCase)
         JsonObject msg = new JsonObject();
-        JsonObject config = new JsonObject();
-        config.addProperty("model", "models/gemini-3.1-flash-live-preview");
+        JsonObject setup = new JsonObject();
+        setup.addProperty("model", "models/gemini-3.1-flash-live-preview");
 
-        // Response modalities
+        // generationConfig wrapper (responseModalities + speechConfig go INSIDE this)
+        JsonObject generationConfig = new JsonObject();
+
         JsonArray modalities = new JsonArray();
         modalities.add("AUDIO");
-        config.add("responseModalities", modalities);
+        generationConfig.add("responseModalities", modalities);
 
-        // Speech config
         JsonObject speechConfig = new JsonObject();
         JsonObject voiceConfig = new JsonObject();
         JsonObject prebuiltVoiceConfig = new JsonObject();
         prebuiltVoiceConfig.addProperty("voiceName", "Kore");
         voiceConfig.add("prebuiltVoiceConfig", prebuiltVoiceConfig);
         speechConfig.add("voiceConfig", voiceConfig);
-        config.add("speechConfig", speechConfig);
+        generationConfig.add("speechConfig", speechConfig);
 
-        // System instruction
+        setup.add("generationConfig", generationConfig);
+
+        // System instruction (outside generationConfig)
         JsonObject systemInstruction = new JsonObject();
         JsonArray parts = new JsonArray();
         JsonObject part = new JsonObject();
         part.addProperty("text", SYSTEM_INSTRUCTION);
         parts.add(part);
         systemInstruction.add("parts", parts);
-        config.add("systemInstruction", systemInstruction);
+        setup.add("systemInstruction", systemInstruction);
 
-        // Wrap in "setup" envelope
-        msg.add("setup", config);
+        msg.add("setup", setup);
 
         String json = gson.toJson(msg);
         debug("Step 3: Sending setup (model=gemini-3.1-flash-live-preview, voice=Kore)");
