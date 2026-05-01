@@ -19,7 +19,7 @@ import okhttp3.Response;
 public class GeminiTextChatManager {
 
     private static final String TAG = "GeminiTextChat";
-    private static final String MODEL = "gemini-2.0-flash";
+    private static final String MODEL = "gemini-2.5-flash";
     private static final String BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent";
     private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
