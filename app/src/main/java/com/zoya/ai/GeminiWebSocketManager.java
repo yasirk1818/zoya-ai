@@ -114,7 +114,7 @@ public class GeminiWebSocketManager {
     private void sendSetupMessage() {
         JsonObject msg = new JsonObject();
         JsonObject setup = new JsonObject();
-        setup.addProperty("model", "models/gemini-3.1-flash-live-preview");
+        setup.addProperty("model", "models/gemini-2.5-flash-native-audio-latest");
 
         // generationConfig wrapper (responseModalities + speechConfig go INSIDE this)
         JsonObject generationConfig = new JsonObject();
@@ -145,7 +145,7 @@ public class GeminiWebSocketManager {
         msg.add("setup", setup);
 
         String json = gson.toJson(msg);
-        debug("Step 3: Sending setup (model=gemini-3.1-flash-live-preview, voice=Kore)");
+        debug("Step 3: Sending setup (model=gemini-2.5-flash-native-audio-latest, voice=Kore)");
         boolean sent = webSocket.send(json);
         debug("Step 3b: Setup sent=" + sent + ", waiting for setupComplete...");
     }
