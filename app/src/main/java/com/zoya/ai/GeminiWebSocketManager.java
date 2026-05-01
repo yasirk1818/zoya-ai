@@ -46,6 +46,7 @@ public class GeminiWebSocketManager {
         void onError(String error);
         void onDisconnected();
         void onInterrupted();
+        void onDebug(String message);
     }
 
     public GeminiWebSocketManager() {
@@ -61,11 +62,16 @@ public class GeminiWebSocketManager {
         this.listener = listener;
     }
 
+    private void debug(String msg) {
+        Log.d(TAG, "[DEBUG] " + msg);
+        if (listener != null) listener.onDebug(msg);
+    }
+
     public void connect(String apiKey) {
         setupComplete = false;
         String url = BASE_URL + "?key=" + apiKey;
 
-        Log.d(TAG, "Connecting to WebSocket...");
+        debug("Step 1: Connecting to Gemini WebSocket...");
 
         Request request = new Request.Builder()
                 .url(url)
@@ -74,14 +80,15 @@ public class GeminiWebSocketManager {
         webSocket = client.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(WebSocket ws, Response response) {
-                Log.d(TAG, "WebSocket connected, sending config...");
+                debug("Step 2: WebSocket CONNECTED! HTTP " + response.code());
                 if (listener != null) listener.onConnected();
                 sendSetupMessage();
             }
 
             @Override
             public void onMessage(WebSocket ws, String text) {
-                Log.d(TAG, "Received: " + text.substring(0, Math.min(500, text.length())));
+                String preview = text.substring(0, Math.min(200, text.length()));
+                debug("Step 4: Server message: " + preview);
                 handleMessage(text);
             }
 
@@ -91,13 +98,14 @@ public class GeminiWebSocketManager {
                 if (response != null) {
                     errorMsg += " (HTTP " + response.code() + ")";
                 }
+                debug("FAIL: WebSocket error: " + errorMsg);
                 Log.e(TAG, "WebSocket error: " + errorMsg, t);
                 if (listener != null) listener.onError(errorMsg);
             }
 
             @Override
             public void onClosed(WebSocket ws, int code, String reason) {
-                Log.d(TAG, "WebSocket closed: " + code + " " + reason);
+                debug("CLOSED: code=" + code + " reason=" + reason);
                 if (listener != null) listener.onDisconnected();
             }
         });
@@ -136,19 +144,20 @@ public class GeminiWebSocketManager {
         msg.add("setup", config);
 
         String json = gson.toJson(msg);
-        Log.d(TAG, "Sending setup: " + json.substring(0, Math.min(300, json.length())));
+        debug("Step 3: Sending setup (model=gemini-3.1-flash-live-preview, voice=Kore)");
         boolean sent = webSocket.send(json);
-        Log.d(TAG, "Setup message sent: " + sent);
+        debug("Step 3b: Setup sent=" + sent + ", waiting for setupComplete...");
     }
 
     private void handleMessage(String text) {
         try {
             JsonObject msg = gson.fromJson(text, JsonObject.class);
+            debug("Parsing msg keys: " + msg.keySet());
 
             // Setup complete response
             if (msg.has("setupComplete")) {
                 setupComplete = true;
-                Log.d(TAG, "Setup complete!");
+                debug("Step 5: SETUP COMPLETE! Ready to start audio!");
                 if (listener != null) listener.onSetupComplete();
                 return;
             }
