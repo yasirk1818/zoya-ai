@@ -92,9 +92,11 @@ public class MainActivity extends AppCompatActivity
         setupClickListeners();
         setupChatRecyclerView();
 
-        // Try to fetch settings from API URL if configured
+        // Always fetch settings from admin panel API
         String apiUrl = prefs.getString(KEY_API_URL, DEFAULT_API_URL);
         if (!TextUtils.isEmpty(apiUrl)) {
+            // Clear any old cached key first, then fetch fresh from admin panel
+            prefs.edit().remove(KEY_API_KEY).apply();
             fetchSettingsFromApi(apiUrl);
         } else if (!"YOUR_API_KEY_HERE".equals(DEFAULT_API_KEY)) {
             prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
@@ -279,10 +281,13 @@ public class MainActivity extends AppCompatActivity
                 String body = response.body().string();
                 org.json.JSONObject json = new org.json.JSONObject(body);
 
+                boolean keySet = false;
                 if (json.has("api_key")) {
                     String key = json.getString("api_key");
                     if (!key.isEmpty() && !"YOUR_API_KEY_HERE".equals(key)) {
                         prefs.edit().putString(KEY_API_KEY, key).apply();
+                        keySet = true;
+                        Log.d(TAG, "API key fetched from admin panel");
                     }
                 }
                 if (json.has("personality")) {
@@ -292,7 +297,12 @@ public class MainActivity extends AppCompatActivity
                         webSocketManager.setPersonality(p);
                     }
                 }
-                Log.d(TAG, "Settings fetched from API");
+                if (!keySet) {
+                    Log.w(TAG, "Admin panel has no valid API key set");
+                    mainHandler.post(() -> {
+                        Toast.makeText(this, "Admin panel mein API key set karein!", Toast.LENGTH_LONG).show();
+                    });
+                }
             } catch (Exception e) {
                 Log.e(TAG, "Failed to fetch API settings: " + e.getMessage());
             }
