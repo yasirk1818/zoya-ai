@@ -100,11 +100,6 @@ public class MainActivity extends AppCompatActivity
             fetchSettingsFromApi(apiUrl);
         } else if (!"YOUR_API_KEY_HERE".equals(DEFAULT_API_KEY)) {
             prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
-        } else {
-            String savedKey = prefs.getString(KEY_API_KEY, "");
-            if (TextUtils.isEmpty(savedKey)) {
-                showApiKeyOverlay();
-            }
         }
 
         // Request mic permission immediately on launch
@@ -300,7 +295,8 @@ public class MainActivity extends AppCompatActivity
                 if (!keySet) {
                     Log.w(TAG, "Admin panel has no valid API key set");
                     mainHandler.post(() -> {
-                        Toast.makeText(this, "Admin panel mein API key set karein!", Toast.LENGTH_LONG).show();
+                        chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+                        scrollToBottom();
                     });
                 }
             } catch (Exception e) {
@@ -321,7 +317,8 @@ public class MainActivity extends AppCompatActivity
         String apiKey = prefs.getString(KEY_API_KEY, "");
 
         if (TextUtils.isEmpty(apiKey) || "YOUR_API_KEY_HERE".equals(apiKey)) {
-            showApiKeyOverlay();
+            chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+            scrollToBottom();
             return;
         }
 
@@ -474,7 +471,8 @@ public class MainActivity extends AppCompatActivity
         // Voice session is NOT active → use text chat model (gemini-2.0-flash)
         String apiKey = prefs.getString(KEY_API_KEY, "");
         if (TextUtils.isEmpty(apiKey)) {
-            showApiKeyOverlay();
+            chatAdapter.addMessage(new ChatMessage("API key not set in admin panel", ChatMessage.TYPE_ZOYA));
+            scrollToBottom();
             return;
         }
 
