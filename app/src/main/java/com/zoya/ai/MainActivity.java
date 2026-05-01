@@ -33,6 +33,7 @@ public class MainActivity extends AppCompatActivity
     private static final int PERMISSION_REQUEST_CODE = 100;
     private static final String PREFS_NAME = "zoya_prefs";
     private static final String KEY_API_KEY = "api_key";
+    private static final String DEFAULT_API_KEY = "AIzaSyB8F9JruBh5O-nBnWjgGsuccTPLNtyHn8A";
 
     // State
     private enum AppState { IDLE, LISTENING, PROCESSING, SPEAKING }
@@ -80,10 +81,10 @@ public class MainActivity extends AppCompatActivity
         setupClickListeners();
         setupChatRecyclerView();
 
-        // Check if API key exists
+        // Set default API key if none saved
         String savedKey = prefs.getString(KEY_API_KEY, "");
         if (TextUtils.isEmpty(savedKey)) {
-            showApiKeyOverlay();
+            prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply();
         }
     }
 
